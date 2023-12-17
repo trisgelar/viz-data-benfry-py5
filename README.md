@@ -74,3 +74,8 @@ key_pressed() - If defined, it will be called once when a keyboard key is presse
 key_released() - If defined, it will be called once when a keyboard key is released.
 key_typed() - If defined, it will be called once when a keyboard key is pressed and released.
 Py5KeyEvent Class - A Py5KeyEvent object will be passed to user-defined keyboard event functions.
+
+## Features Not Yet Implemented
+
+1. Map (Integrator Class)
+2. Time Series (Tab & Integrator Class)
