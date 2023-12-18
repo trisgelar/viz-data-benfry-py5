@@ -1,0 +1,136 @@
+#!/usr/bin/perl -w
+
+use Time::Local;
+
+# Send header to the web server to indicate we are awake,
+# and that plain text data will be returned.
+print "Content-type: text/plain\n\n";
+
+# These values could be read from parameters to the CGI if so desired, i.e.
+# http://benfry.com/salaryper/data.cgi?first=20070401&last=20070930&min=10
+# This would make the software more flexible to use it for multiple years.
+$firstDateStamp = '20070401';
+$lastDateStamp = '20070930';
+$minDateIndex = 10;
+
+$dataFolder = 'individual';
+$comboFolder = 'combined';
+`mkdir -p $dataFolder`;
+`mkdir -p $comboFolder`;
+
+$firstDateStamp =~ /(\d\d\d\d)(\d\d)(\d\d)/;
+$year = $1;
+$month = $2 - 1;  # Months are 0-indexed in Perl
+$day = $3;
+$firstDate = timelocal(0, 0, 0, $day, $month, $year);
+
+$lastDateStamp =~ /(\d\d\d\d)(\d\d)(\d\d)/;
+$year = $1;
+$month = $2 - 1;  # Months are 0-indexed in Perl
+$day = $3;
+$lastDate = timelocal(0, 0, 0, $day, $month, $year);
+
+$SECONDS_PER_DAY = 24 * 60 * 60;
+
+# Yesterday is the maximum possible date, 
+# because the scores from today will not yet be updated.
+$yesterdayDate = time - $SECONDS_PER_DAY;
+
+# Don't bother grabbing data for the earlier part of the season
+# because it will not be used (and the program is not expecting it)
+$date = $firstDate + $minDateIndex*$SECONDS_PER_DAY;
+
+my @dateStamps = ();
+
+# If season is ongoing, only read data through yesterday.
+$endDate = ($yesterdayDate < $lastDate) ? $yesterdayDate : $lastDate;
+while ($date <= $endDate) {
+    ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) =
+	localtime($date);
+    $stamp = sprintf("%04d%02d%02d", $year + 1900, $mon+1, $mday);
+    push @dateStamps, $stamp;
+    #print "$date - " . localtime($date) . "\n";
+    $date += $SECONDS_PER_DAY;
+}
+$endDateStamp = $dateStamps[$#dateStamps];
+
+$combinedFile = "$comboFolder/$endDateStamp.tsv";
+if (-f $combinedFile) {
+    # Open the file and spew the contents back to the applet.
+    open(INPUT, $combinedFile) || die $!;
+    @contents = <INPUT>;
+    print @contents;
+    close(INPUT);
+
+} else {
+    # Download any days not yet downloaded.
+    foreach $stamp (@dateStamps) {
+	$filename = "$dataFolder/$stamp.tsv";
+	if (!(-f $filename)) {
+	    downloadWinLoss($stamp);
+	}
+    }
+    # Concatenate everything into a single file.
+    open(OUTPUT, ">$combinedFile") || die $!;
+    foreach $stamp (@dateStamps) {
+	open(INPUT, "$dataFolder/$stamp.tsv") || die $!;
+	@contents = <INPUT>;
+	print OUTPUT @contents;
+	close(INPUT);
+
+	# Also write the contents of this file to the applet.
+	print @contents;
+    }
+    close(OUTPUT);
+}
+
+
+sub downloadWinLoss() {
+    my $stamp = shift;
+    
+    open(OUTPUT, ">$dataFolder/$stamp.tsv") || die $!;
+
+    $stamp =~ /(\d\d\d\d)(\d\d)(\d\d)/;
+    $day = sprintf("year_%04d/month_%02d/day_%02d/", $1, $2, $3);
+
+    $base = 'http://mlb.mlb.com/components/game/' . $day;
+
+    parseWinLoss($base . 'standings_rs_ale.js');
+    parseWinLoss($base . 'standings_rs_alw.js');
+    parseWinLoss($base . 'standings_rs_alc.js');
+
+    parseWinLoss($base . 'standings_rs_nle.js');
+    parseWinLoss($base . 'standings_rs_nlw.js');
+    parseWinLoss($base . 'standings_rs_nlc.js');
+
+    close(OUTPUT);
+}
+
+
+sub parseWinLoss() {
+    $url = shift;
+    # Download the contents of the .js file using "curl"
+    @lines = `curl --silent $url`;
+
+    $teamCode = '';
+    $wins = 0;
+    $losses = 0;
+
+    foreach $line (@lines) {
+	if ($line =~ /\s+([\w\d]+):\s'(.*)',?/) {
+	    $attr = $1;
+	    $value = $2;
+	    if ($attr eq 'code') {
+		$teamCode = $value;
+	    } elsif ($attr eq 'w') {
+		$wins = $value;
+	    } elsif ($attr eq 'l') {
+		$losses = $value;
+	    }
+
+	} elsif ($line =~ /^}/) {
+	    # This is the end of a group, print the values
+	    print OUTPUT "$teamCode\t$wins\t$losses\n";
+	}
+    }
+}
